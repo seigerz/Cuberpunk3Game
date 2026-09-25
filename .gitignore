@@ -1,0 +1,31 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Build results
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+
+# Rider
+.idea/
+
+# User-specific files
+*.rsuser
+*.userosscache
+*.sln.docstates
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# NuGet packages
+*.nupkg
+packages/
+
+# OS files
+.DS_Store
+Thumbs.db
