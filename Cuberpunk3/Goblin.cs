@@ -2,91 +2,226 @@
 using System.Collections.Generic;
 using System.Text;
 
-namespace Cuberpunk3
+namespace Cyberpunk3
 {
-    class Goblin
+    public class Goblin
     {
-        // ==== ПОЛЯ – характеристики гоблина ====
-        private int x, y;                // координаты на поле
-        private int leftArmHP;           // здоровье левой руки
-        private int rightArmHP;          // здоровье правой руки
+        // ===== СТАТИЧЕСКИЕ ЧЛЕНЫ =====
+        /// <summary>Счетчик созданных гоблинов.</summary>
+        private static int totalGoblinsCreated = 0;
+        /// <summary>Максимальное здоровье каждой части тела (общее для всех гоблинов). </summary>
+        private static int maxHealthPerBodyPart = GameConstants.GoblinBodyPartMaxHP;
+        /// <summary>Начальное количество патронов (общее для всех гоблинов).</summary>
+        private static int startingAmmo = GameConstants.GoblinStartAmmo;
+        /// <summary>Очки действия за ход (общее для всех гоблинов). </summary>
+        private static int actionPointsPerTurn = GameConstants.GoblinActionPoints;
+
+        /// <summary>
+        /// Получить общее количество созданных гоблинов.
+        /// </summary>
+        public static int GetTotalGoblins() { return totalGoblinsCreated; }
+
+        /// <summary>
+        /// Проверить, не превышен ли лимит гоблинов.
+        /// </summary>
+        public static bool CanCreateGoblin() { return totalGoblinsCreated < GameConstants.MaxGoblins; }
+
+        /// <summary>
+        /// Сбросить счётчик (новая партия, тесты).
+        /// </summary>
+        public static void ResetCounter() { totalGoblinsCreated = 0; }   // новая игра / тесты
+
+        // ===== ПОЛЯ  =====
+        private int id;                  // уникальный ID
+        private int q, r;                // координаты в Axial системе
+        private int actionPoints;        // очки действия
+        private int leftArmHP;           // здоровье левой руки (рукопашная)
+        private int rightArmHP;          // здоровье правой руки (огнестрел)
         private int headHP;              // здоровье головы
         private int legsHP;              // здоровье ног
         private int ammo;                // патроны
+        private int shotsThisTurn;       // количество выстрелов за текущий ход
 
-        // ==== СВОЙСТВА – контролируемый доступ к данным ====
+
+        // ===== СВОЙСТВА  =====
         // Свойства только для чтения, есть get нет set
-        public int X { get { return x; } }
-        public int Y { get { return y; } }
-        // Свойство с проверкой – патроны не могут быть отрицательными
+        public int ID { get { return id; } }
+        public int Q { get { return q; } }
+        public int R { get { return r; } }
+        public bool IsAlive { get { return headHP > 0; } }
+
+        /// <summary>
+        /// Свойство с проверкой – патроны и очки действия не могут быть отрицательными.
+        /// </summary> 
         public int Ammo
         {
             get { return ammo; }
             set { ammo = (value < 0) ? 0 : value; }
         }
-        // ==== КОНСТРУКТОР – инициализация при создании ====
-        public Goblin(int x, int y)
+        public int ActionPoints
         {
-            this.x = x;          // this.x - поле класса, x - параметр
-            this.y = y;          // this.y - поле класса, y - параметр
-            this.leftArmHP = 2;  // у всех гоблинов здоровье = 2
-            this.rightArmHP = 2;
-            this.headHP = 2;
-            this.legsHP = 2;
-            this.ammo = 4;       // начальные патроны
+            get { return actionPoints; }
+            set
+            {
+                if (value < 0)
+                    actionPoints = 0;
+                else if (value > actionPointsPerTurn)
+                    actionPoints = actionPointsPerTurn;
+                else
+                    actionPoints = value;
+            }
         }
 
-        // ==== МЕТОДЫ – действия, которые может выполнить гоблин ====
-        // Публичные методы
-        // Стрельба
-        public void Shoot(int targetX, int targetY)
-        {
-            if (ammo <= 0)
-            {
-                Console.WriteLine("Патроны кончились!");
-                return;
-            }
 
-            int distance = CalculateDistance(targetX, targetY);
-            int dice = this.RollDice();
-            if (dice >= distance)
+        // ===== КОНСТРУКТОР =====
+        public Goblin(int q, int r)
+        {
+            if (!CanCreateGoblin())
+                throw new InvalidOperationException(
+                    $"Нельзя создать больше {GameConstants.MaxGoblins} гоблинов!");
+
+            totalGoblinsCreated++;
+            id = totalGoblinsCreated;
+            this.q = q;
+            this.r = r;
+            leftArmHP = maxHealthPerBodyPart;
+            rightArmHP = maxHealthPerBodyPart;
+            headHP = maxHealthPerBodyPart;
+            legsHP = maxHealthPerBodyPart;
+            ammo = startingAmmo;
+            actionPoints = actionPointsPerTurn;
+            shotsThisTurn = 0;
+
+            Console.WriteLine($"[Гоблин #{id}] создан на {HexGrid.HexToString(q, r)}");
+        }
+
+
+        // ===== МЕТОДЫ =====
+        /// <summary>
+        /// Все гексы, по которым гоблин может стрелять (6 направлений).
+        /// </summary>
+        public List<(int q, int r, int modifier)> GetShootTargets(GameBoard board)
+        {
+            var all = new List<(int q, int r, int modifier)>();
+            for (int dir = 0; dir < 6; dir++)
+                all.AddRange(board.GetLineOfFire(q, r, dir));
+            return all;
+        }
+
+        /// <summary>
+        /// Стрельба.
+        /// </summary>
+        public void Shoot(GameBoard board, int targetQ, int targetR)
+        {
+            if (!IsAlive) { Console.WriteLine($"[Гоблин #{id}] Убит и не может стрелять!"); return; }
+            if (rightArmHP <= 0) { Console.WriteLine($"[Гоблин #{id}] Оружие уничтожено!"); return; }
+            if (ammo <= 0) { Console.WriteLine($"[Гоблин #{id}] Патроны кончились!"); return; }
+            if (actionPoints < GameConstants.ShootCost)
+            { Console.WriteLine($"[Гоблин #{id}] Недостаточно ОД!"); return; }
+            if (shotsThisTurn >= GameConstants.MaxShotsPerTurn)
+            { Console.WriteLine($"[Гоблин #{id}] Лимит выстрелов за ход!"); return; }
+
+            // Ищем цель в наборе допустимых
+            int modifier = 0;
+            bool found = false;
+            foreach (var t in GetShootTargets(board))
             {
-                Console.WriteLine($"Гоблин на ({x}, {y}) попал! Бросок: {dice}, расстояние: {distance}");
-                // А теперь нужно понять, в какую часть тела попали...
-                // А еще проверить стены...
-                int damageDice = this.RollDice();
-                // Здесь будет логика урона...
-                ammo--;
+                if (t.q == targetQ && t.r == targetR)
+                {
+                    modifier = t.modifier;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            { Console.WriteLine($"[Гоблин #{id}] Цель вне линии огня!"); return; }
+
+            int distance = HexGrid.ShotDistance(q, r, targetQ, targetR);
+
+            ammo--;
+            actionPoints -= GameConstants.ShootCost;
+            shotsThisTurn++;
+
+            int dice = DiceRoller.RollWithLog($"Гоблин #{id} стреляет");
+            if (dice == 1)
+            {
+                Console.WriteLine($"[Гоблин #{id}] Осечка!");
+            }
+            else if (dice >= distance)
+            {
+                Console.WriteLine($"[Гоблин #{id}] Попадание! Цель: {HexGrid.HexToString(targetQ, targetR)}, поправка к ранению: {modifier}");
             }
             else
             {
-                Console.WriteLine($"Гоблин на ({x}, {y}) промахнулся. Бросок: {dice}, нужно: {distance}");
+                Console.WriteLine($"[Гоблин #{id}] Промах! Нужно: {distance}, выпало: {dice}");
             }
         }
-        // Движение
-        public void Move(int newX, int newY)
+
+        /// <summary>
+        /// Движение.
+        /// </summary>
+        public void Move(GameBoard board, int newQ, int newR)
         {
-            x = newX;
-            y = newY;
-            Console.WriteLine($"Гоблин переместился на ({x}, {y})");
+            if (!IsAlive) { Console.WriteLine($"[Гоблин #{id}] Убит и не может двигаться!"); return; }
+            if (legsHP <= 0)
+            { Console.WriteLine($"[Гоблин #{id}] Не может двигаться - ноги выведены из строя!"); return; }
+
+            int steps = PathFinder.GetPathLength(board, q, r, newQ, newR);
+            if (steps < 0)
+            { Console.WriteLine($"[Гоблин #{id}] Туда не пройти!"); return; }
+
+            int cost = steps * GameConstants.GoblinMoveCost;
+            if (actionPoints < cost)
+            { Console.WriteLine($"[Гоблин #{id}] Недостаточно ОД! Нужно: {cost}, есть: {actionPoints}"); return; }
+
+            q = newQ;
+            r = newR;
+            actionPoints -= cost;
+            Console.WriteLine($"[Гоблин #{id}] переместился на {HexGrid.HexToString(q, r)}. ОД: {actionPoints}");
         }
 
-        // Приватные методы
-        // Вычисление расстояния до цели
-        // Доступен только внутри класса Goblin
-        private int CalculateDistance(int targetX, int targetY)
+        /// <summary>
+        /// Сброс очков действия.
+        /// </summary>
+        public void ResetActionPoints()
         {
-            // Упрощенное вычисление (Манхэттенское расстояние)
-            return Math.Abs(x - targetX) + Math.Abs(y - targetY);
+            actionPoints = actionPointsPerTurn;
+            shotsThisTurn = 0;
+        }
+        
+        /// <summary>
+        /// Напечатать статус гоблина.
+        /// </summary>
+        public void PrintStatus()
+        {
+            Console.WriteLine($"===== Гоблин #{id} =====");
+            Console.WriteLine($"Позиция: {HexGrid.HexToString(q, r)}");
+            Console.WriteLine($"Патроны: {ammo}/{startingAmmo}");
+            Console.WriteLine($"ОД: {actionPoints}/{actionPointsPerTurn}");
+            Console.WriteLine($"Метал. рука: {leftArmHP}/{maxHealthPerBodyPart}");
+            Console.WriteLine($"Рука (оружие): {rightArmHP}/{maxHealthPerBodyPart}");
+            Console.WriteLine($"Голова: {headHP}/{maxHealthPerBodyPart}");
+            Console.WriteLine($"Ноги: {legsHP}/{maxHealthPerBodyPart}");
+            Console.WriteLine($"Статус: {(IsAlive ? "Жив" : "Убит")}");
+            Console.WriteLine("===================");
         }
 
-        // Бросок кубика
-        // Создаем поле random, которое является экземпляром класса генератора псевдослучайных чисел Random (мы вызываем конструктор Random() используя ключевое слово new) 
-        private Random random = new Random();
-        private int RollDice()
+
+        // ===== ПРИВАТНЫЕ МЕТОДЫ =====
+        /// <summary>
+        /// Получение урона
+        /// </summary>
+        private void TakeWound()
         {
-            return random.Next(1, 7);  // от 1 до 6
+
+        }
+
+        /// <summary>
+        /// Ремонт
+        /// </summary>
+        private void Heal()
+        {
+
         }
     }
-
 }
